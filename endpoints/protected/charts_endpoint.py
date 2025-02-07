@@ -1,24 +1,118 @@
 import schemas
+from typing import List
 from database import get_db, Runner, Activity
 from fastapi import HTTPException, Depends, Body
 from sqlalchemy import and_, select, func, cast, DateTime
 from sqlalchemy.orm import Session
 from typing import Literal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
+import sqlalchemy
 
-def get_week_range(date_str: str) -> str:
-    date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-    monday = date_obj - timedelta(days=date_obj.weekday())
-    sunday = monday + timedelta(days=6)
-    return f"{monday.strftime('%Y-%m-%d')} to {sunday.strftime('%Y-%m-%d')}"
+def get_years_to_analyze(current_year: int, num_years: int) -> List[int]:
+    """Return a list of years to analyze, starting from current_year going backwards."""
+    return list(range(current_year, current_year - num_years, -1))
 
-def format_month(date_str: str) -> str:
-    date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-    return date_obj.strftime('%B %Y')  
+def get_daily_activities(db: Session, runner_username: str, runner_access: str, year: int):
+    """Get all activities for a specific year, ordered by date."""
+    return db.execute(
+        select(
+            func.date(Activity.start_date_local).label('activity_date'),
+            func.sum(Activity.distance).label('distance'),
+            func.sum(Activity.total_elevation_gain).label('elevation_gain')
+        )
+        .join(Runner)
+        .filter(
+            and_(
+                Runner.username == runner_username,
+                Runner.access_token == runner_access,
+                # Changed this line to cast the string to timestamp first
+                func.date_part('year', func.cast(Activity.start_date_local, sqlalchemy.DateTime)) == year
+            )
+        )
+        .group_by(func.date(Activity.start_date_local))
+        .order_by('activity_date')
+    ).all()
 
-def format_day(date_str: str) -> str:
-    date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-    return date_obj.strftime('%d')  
+def get_date_range(latest_date: datetime, period: str, activity_count: int, db: Session, runner_username: str, runner_access: str) -> list[datetime]:
+    """
+    Generate a list of dates that spans from the latest activity to cover all dates needed to include
+    the specified number of activities.
+    """
+    # First, get the date of the Nth activity to determine our date range
+    oldest_activity = db.execute(
+        select(Activity)
+        .join(Runner)
+        .filter(
+            and_(
+                Runner.username == runner_username,
+                Runner.access_token == runner_access,
+            )
+        )
+        .order_by(Activity.start_date_local.desc())
+        .offset(activity_count - 1)
+        .limit(1)
+    ).scalar_one_or_none()
+
+    if not oldest_activity:
+        # If we don't have enough activities, get the oldest one we have
+        oldest_activity = db.execute(
+            select(Activity)
+            .join(Runner)
+            .filter(
+                and_(
+                    Runner.username == runner_username,
+                    Runner.access_token == runner_access,
+                )
+            )
+            .order_by(Activity.start_date_local.asc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    if not oldest_activity:
+        return [latest_date]  # Return just today if no activities found
+
+    # Parse the oldest activity date
+    oldest_date = datetime.strptime(oldest_activity.start_date_local.split('T')[0], '%Y-%m-%d')
+    
+    if period == 'day':
+        # Generate all dates between oldest and latest
+        days_between = (latest_date - oldest_date).days + 1
+        return [latest_date - timedelta(days=i) for i in range(days_between)]
+    
+    elif period == 'week':
+        # Start from the Monday of the latest week
+        latest_monday = latest_date - timedelta(days=latest_date.weekday())
+        # Start from the Monday of the oldest week
+        oldest_monday = oldest_date - timedelta(days=oldest_date.weekday())
+        weeks_between = ((latest_monday - oldest_monday).days // 7) + 1
+        return [latest_monday - timedelta(weeks=i) for i in range(weeks_between)]
+    
+    else:  # month
+        # Start from the first of the latest month
+        months = []
+        current_date = latest_date.replace(day=1)
+        oldest_first = oldest_date.replace(day=1)
+        
+        while current_date >= oldest_first:
+            months.append(current_date)
+            # Move to previous month
+            if current_date.month == 1:
+                current_date = current_date.replace(year=current_date.year - 1, month=12)
+            else:
+                current_date = current_date.replace(month=current_date.month - 1)
+        
+        return sorted(months)
+
+def format_period_key(date: datetime, period: str) -> str:
+    """Format the date according to the period type."""
+    if period == 'day':
+        return date.strftime('%Y-%m-%d')
+    elif period == 'week':
+        monday = date
+        sunday = monday + timedelta(days=6)
+        return f"{monday.strftime('%Y-%m-%d')} to {sunday.strftime('%Y-%m-%d')}"
+    else:  # month
+        return date.strftime('%B %Y')
 
 def add_charts_endpoint(app):
     @app.post("/gh_chart/{runner_username}/{runner_access}", response_model=schemas.ActivityGithub)
@@ -89,7 +183,7 @@ def add_charts_endpoint(app):
             raise HTTPException(status_code=500, detail="An error occurred while retrieving activities")
     
 
-    @app.get("/main_chart/{runner_username}/{runner_access}/{limit}/{period}", response_model=schemas.GroupedActivities)
+    @app.get("/main_chart/{runner_username}/{runner_access}/{limit}/{period}", response_model=schemas.GroupedMetrics)
     def main_chart(
             runner_username: str,
             runner_access: str,
@@ -97,10 +191,10 @@ def add_charts_endpoint(app):
             period: Literal['day', 'week', 'month'],
             db: Session = Depends(get_db),
         ):
-            try:
-                # Use distinct to prevent duplicates
-                base_query = (
-                select((Activity))
+        try:
+            # Get the most recent activity to determine the date range
+            latest_activity = db.execute(
+                select(Activity)
                 .join(Runner)
                 .filter(
                     and_(
@@ -109,53 +203,152 @@ def add_charts_endpoint(app):
                     )
                 )
                 .order_by(Activity.start_date_local.desc())
-                .limit(limit)
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if not latest_activity:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No activities found"
+                )
+
+            # Get the date ranges we want to show
+            latest_date = datetime.strptime(latest_activity.start_date_local.split('T')[0], '%Y-%m-%d')
+            date_ranges = get_date_range(latest_date, period, limit, db, runner_username, runner_access)
+
+            # Initialize result dictionary with zeros for all periods
+            grouped_metrics = {}
+            for date in date_ranges:
+                key = format_period_key(date, period)
+                grouped_metrics[key] = {
+                    "total_distance": 0.0,
+                    "total_elevation_gain": 0.0
+                }
+
+            # Build date filtering based on period
+            for i in range(len(date_ranges)):
+                start_date = date_ranges[i]
+                end_date = None
+                
+                if period == 'day':
+                    end_date = start_date + timedelta(days=1)
+                elif period == 'week':
+                    end_date = start_date + timedelta(days=7)
+                else:  # month
+                    if start_date.month == 12:
+                        end_date = start_date.replace(year=start_date.year + 1, month=1)
+                    else:
+                        end_date = start_date.replace(month=start_date.month + 1)
+
+                # Query for aggregated metrics in this period
+                metrics = db.execute(
+                    select(
+                        func.sum(Activity.distance).label('total_distance'),
+                        func.sum(Activity.total_elevation_gain).label('total_elevation_gain')
+                    )
+                    .join(Runner)
+                    .filter(
+                        and_(
+                            Runner.username == runner_username,
+                            Runner.access_token == runner_access,
+                            Activity.start_date_local >= start_date.strftime('%Y-%m-%d'),
+                            Activity.start_date_local < end_date.strftime('%Y-%m-%d')
+                        )
+                    )
+                ).first()
+
+                if metrics and metrics.total_distance is not None:
+                    key = format_period_key(start_date, period)
+                    grouped_metrics[key] = {
+                        "total_distance": round(metrics.total_distance / 1000, 2),  # Convert to kilometers
+                        "total_elevation_gain": round(metrics.total_elevation_gain, 2)
+                    }
+
+            return schemas.GroupedMetrics(
+                period=period,
+                metrics=grouped_metrics
             )
 
-                activities = db.execute(base_query).scalars().all()
-
+        except HTTPException as he:
+            raise he
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"An error occurred while retrieving activities: {str(e)}"
+            )
+    @app.get("/cumulative_chart/{runner_username}/{runner_access}/{num_years}", response_model=schemas.YearlyCumulativeMetrics)
+    def cumulative_chart(
+            runner_username: str,
+            runner_access: str,
+            num_years: int,
+            db: Session = Depends(get_db),
+        ):
+        try:
+            # Get current year and list of years to analyze
+            current_year = datetime.now().year
+            years_to_analyze = get_years_to_analyze(current_year, num_years)
+            
+            # Initialize result dictionary
+            yearly_metrics = {}
+            
+            for year in years_to_analyze:
+                # Get all activities for this year
+                activities = get_daily_activities(db, runner_username, runner_access, year)
+                
                 if not activities:
-                    raise HTTPException(
-                        status_code=404,
-                        detail="No activities found"
-                    )
-
-                # Group activities based on period
-                grouped_data = {}
-                print(activities)
-                for activity in activities: 
-                    # Get the date part of the string (before the 'T')
-                    date_str = activity.start_date_local.split('T')[0]
+                    # Initialize the year with zeros if no activities
+                    start_date = date(year, 1, 1)
+                    end_date = date(year, 12, 31)
+                    daily_metrics = {}
                     
-                    if period == 'day':
-                        # Use the day number
-                        group_key = format_day(date_str)
+                    current_date = start_date
+                    while current_date <= end_date:
+                        daily_metrics[current_date.strftime('%Y-%m-%d')] = {
+                            "cumulative_distance": 0.0,
+                            "cumulative_elevation_gain": 0.0
+                        }
+                        current_date += timedelta(days=1)
                     
-                    elif period == 'week':
-                        # Use date range for the week
-                        group_key = get_week_range(date_str)
+                    yearly_metrics[str(year)] = daily_metrics
+                    continue
+                
+                # Initialize cumulative values
+                cumulative_distance = 0.0
+                cumulative_elevation = 0.0
+                daily_metrics = {}
+                
+                # Start from January 1st
+                current_date = date(year, 1, 1)
+                activity_index = 0
+                
+                # Go through each day of the year
+                while current_date <= date(year, 12, 31):
+                    # Check if we have an activity for this day
+                    if (activity_index < len(activities) and 
+                        activities[activity_index].activity_date == current_date):
+                        # Add today's activities to cumulative totals
+                        cumulative_distance += activities[activity_index].distance / 1000  # Convert to km
+                        cumulative_elevation += activities[activity_index].elevation_gain
+                        activity_index += 1
                     
-                    elif period == 'month':
-                        # Use month name and year
-                        group_key = format_month(date_str)
+                    # Store the cumulative values for this day
+                    daily_metrics[current_date.strftime('%Y-%m-%d')] = {
+                        "cumulative_distance": round(cumulative_distance, 2),
+                        "cumulative_elevation_gain": round(cumulative_elevation, 2)
+                    }
+                    
+                    current_date += timedelta(days=1)
+                
+                yearly_metrics[str(year)] = daily_metrics
 
-                    # Initialize group if it doesn't exist
-                    if group_key not in grouped_data:
-                        grouped_data[group_key] = []
+            return schemas.YearlyCumulativeMetrics(
+                years=yearly_metrics
+            )
 
-                    # Add activity to its group
-                    grouped_data[group_key].append(activity)
-
-                return schemas.GroupedActivities(
-                    period=period,
-                    groups=grouped_data
-                )
-
-            except HTTPException as he:
-                raise he
-            except Exception as e:
-                print(f"An error occurred: {e}")
-                raise HTTPException(
-                    status_code=500, 
-                    detail=f"An error occurred while retrieving activities: {str(e)}"
-                )
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"An error occurred while retrieving cumulative metrics: {str(e)}"
+            )

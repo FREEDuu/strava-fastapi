@@ -2,7 +2,12 @@ from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from typing import List, Dict, Optional
 
+class YearlyCumulativeMetrics(BaseModel):
+    years: Dict[str, Dict[str, Dict[str, float]]]
 
+class GroupedMetrics(BaseModel):
+    period: str
+    metrics: Dict[str, dict[str, float]]
 
 class Runner(BaseModel):
     id: int

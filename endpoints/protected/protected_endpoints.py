@@ -165,3 +165,82 @@ def add_protected(app, URL, DATABASE_URL):
         except Exception as e:
             print(f"An error occurred: {e}")
             raise HTTPException(status_code=500, detail="An error occurred while retrieving activities")
+        
+    @app.get("/auth_runner_highlights_year/{runner_username}/{runner_access}/{limit}", response_model=List[schemas.Activity])
+    def get_longest_activities(
+        runner_username: str,
+        runner_access: str,
+        limit: int,
+        db: Session = Depends(get_db),
+    ):
+        try:
+            activities = db.execute(
+                select(Activity)
+                .join(Runner)
+                .filter(
+                    and_(
+                        Runner.username == runner_username,
+                        Runner.access_token == runner_access,
+                    )
+                )
+                .order_by(Activity.distance.desc())  # Order by distance descending
+                .limit(limit)
+            ).scalars().all()
+
+            if not activities:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No activities found"
+                )
+
+            return activities
+
+        except HTTPException as he:
+            raise he
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"An error occurred while retrieving activities: {str(e)}"
+            )
+        
+
+    @app.get('/most_kudos/{runner_username}/{runner_access}/{limit}', response_model=List[schemas.Activity])
+    def most_kudos(
+        runner_username: str,
+        runner_access: str,
+        limit: int,
+        db: Session = Depends(get_db),
+    ):
+        try:
+            activities = db.execute(
+                select(Activity)
+                .join(Runner)
+                .filter(
+                    and_(
+                        Runner.username == runner_username,
+                        Runner.access_token == runner_access,
+                    )
+                )
+                .order_by(Activity.kudos_count.desc())  # Order by kudos count descending
+                .limit(limit)
+            ).scalars().all()
+
+            if not activities:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No activities found"
+                )
+
+            return activities
+
+        except HTTPException as he:
+            raise he
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"An error occurred while retrieving activities: {str(e)}"
+            )
+
+
