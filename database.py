@@ -2,7 +2,6 @@ from sqlalchemy import create_engine, MetaData
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
-from sqlalchemy.ext.asyncio import AsyncSession
 
 import os
 load_dotenv()

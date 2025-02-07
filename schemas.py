@@ -1,6 +1,13 @@
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
-from typing import Optional
+from typing import List, Dict, Optional
+
+class YearlyCumulativeMetrics(BaseModel):
+    years: Dict[str, Dict[str, Dict[str, float]]]
+
+class GroupedMetrics(BaseModel):
+    period: str
+    metrics: Dict[str, dict[str, float]]
 
 class Runner(BaseModel):
     id: int
@@ -14,6 +21,14 @@ class DateRange(BaseModel):
     start_date: Optional[str] = None  
     end_date: Optional[str] = None  
 
+class ActivityLevel(BaseModel):
+    level: int
+
+class ActivityGithub(BaseModel):
+    data: Dict[str, ActivityLevel]
+
+    class Config:
+        from_attributes = True
 
 class Activity(BaseModel):
     id: int
@@ -35,7 +50,10 @@ class Activity(BaseModel):
         from_attributes = True
         model_config = ConfigDict(extra="ignore")  
 
-
+class GroupedActivities(BaseModel):
+    period: str  # 'day', 'week', or 'month'
+    groups: Dict[str, List[Activity]]
+    
 class CreateUserRequest(BaseModel):
     code: str
 
