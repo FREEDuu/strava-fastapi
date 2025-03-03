@@ -2,10 +2,8 @@ from fastapi import FastAPI
 from dotenv import load_dotenv
 import os 
 from middleware import add_middleware
-from endpoints.unprotected.unprotected_endpoints import add_unprotected
-from endpoints.protected.protected_endpoints import add_protected
-from endpoints.protected.charts_endpoint import add_charts_endpoint
-
+from endpoints.real_endpoints.auth_endpoint import auth_endpoints
+from endpoints.real_endpoints.data_endpoints import data_endpoints
 load_dotenv()
 client_id = os.getenv("client_id")
 client_secret = os.getenv("client_secret")
@@ -14,6 +12,5 @@ URL = f'https://www.strava.com/oauth/token?client_id={client_id}&client_secret={
 
 app = FastAPI()
 add_middleware(app)
-add_unprotected(app)
-add_protected(app, URL, DATABASE_URL)
-add_charts_endpoint(app)
+auth_endpoints(app, URL, DATABASE_URL)
+data_endpoints(app)

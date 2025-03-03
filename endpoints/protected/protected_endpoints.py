@@ -1,6 +1,6 @@
 import schemas
 from sqlalchemy.orm import Session
-from fastapi import HTTPException, Depends, Body
+from fastapi import HTTPException, Depends, Body, status
 from strava_api import send_data_to_third_party, fetch_and_save_activities_process, fetch_and_save_activities_process_partial
 from database import get_db, Runner, Activity
 import multiprocessing
@@ -9,6 +9,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select, and_, cast, DateTime
 from typing import List
 from fastapi import HTTPException, Depends
+from fastapi import Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from sqlalchemy import select, and_, func
 
 def add_protected(app, URL, DATABASE_URL):
     @app.post("/create_user/")
@@ -72,14 +75,14 @@ def add_protected(app, URL, DATABASE_URL):
             print(f"An unexpected error occurred: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
-    @app.get("/auth_runner_activities/{runner_username}/{runner_access}", response_model=List[schemas.Activity]) 
-    def get_activities(runner_username: str, runner_access: str, db: Session = Depends(get_db)):
+    @app.post("/auth_runner_activities", response_model=List[schemas.Activity]) 
+    def get_activities(request: schemas.AuthRunnerRequest, db: Session = Depends(get_db)):
         try:
             activities = db.execute(
                 select(Activity).join(Runner).filter(
                     and_(
-                        Runner.username == runner_username,
-                        Runner.access_token == runner_access 
+                        Runner.username == request.username,
+                        Runner.access_token == request.access_token  
                     )
                 )
             ).scalars().all()
@@ -91,13 +94,10 @@ def add_protected(app, URL, DATABASE_URL):
         except Exception as e:  # Catch any potential exceptions
             print(f"An error occurred: {e}")  # Log the error for debugging
             raise HTTPException(status_code=500, detail="An error occurred while retrieving activities")
-                    
 
-    @app.get("/auth_runner_activities_limit/{runner_username}/{runner_access}/{limit_query}", response_model=List[schemas.Activity])
+    @app.get("/auth_runner_activities_limit", response_model=List[schemas.Activity])
     def get_activities_limit(
-        runner_username: str,
-        runner_access: str,
-        limit_query: int,
+        request: schemas.AuthRunnerLimitRequest,
         db: Session = Depends(get_db),
     ):
         try:
@@ -106,11 +106,11 @@ def add_protected(app, URL, DATABASE_URL):
                 .join(Runner)
                 .filter(
                     and_(
-                        Runner.username == runner_username,
-                        Runner.access_token == runner_access
+                        Runner.username == request.username,
+                        Runner.access_token == request.access_token
                     )
                 )
-                .limit(limit_query) 
+                .limit(request.limit) 
             ).scalars().all()
             
             if not activities:
@@ -166,11 +166,9 @@ def add_protected(app, URL, DATABASE_URL):
             print(f"An error occurred: {e}")
             raise HTTPException(status_code=500, detail="An error occurred while retrieving activities")
         
-    @app.get("/auth_runner_highlights_year/{runner_username}/{runner_access}/{limit}", response_model=List[schemas.Activity])
+    @app.post("/auth_runner_highlights_year", response_model=List[schemas.Activity])
     def get_longest_activities(
-        runner_username: str,
-        runner_access: str,
-        limit: int,
+        request: schemas.AuthRunnerLimitRequest,
         db: Session = Depends(get_db),
     ):
         try:
@@ -179,12 +177,12 @@ def add_protected(app, URL, DATABASE_URL):
                 .join(Runner)
                 .filter(
                     and_(
-                        Runner.username == runner_username,
-                        Runner.access_token == runner_access,
+                        Runner.username == request.username,
+                        Runner.access_token == request.access_token,
                     )
                 )
                 .order_by(Activity.distance.desc())  # Order by distance descending
-                .limit(limit)
+                .limit(request.limit)
             ).scalars().all()
 
             if not activities:
@@ -205,11 +203,9 @@ def add_protected(app, URL, DATABASE_URL):
             )
         
 
-    @app.get('/most_kudos/{runner_username}/{runner_access}/{limit}', response_model=List[schemas.Activity])
+    @app.post('/most_kudos', response_model=List[schemas.Activity])
     def most_kudos(
-        runner_username: str,
-        runner_access: str,
-        limit: int,
+        request: schemas.AuthRunnerLimitRequest,
         db: Session = Depends(get_db),
     ):
         try:
@@ -218,12 +214,12 @@ def add_protected(app, URL, DATABASE_URL):
                 .join(Runner)
                 .filter(
                     and_(
-                        Runner.username == runner_username,
-                        Runner.access_token == runner_access,
+                        Runner.username == request.username,
+                        Runner.access_token == request.access_token,
                     )
                 )
                 .order_by(Activity.kudos_count.desc())  # Order by kudos count descending
-                .limit(limit)
+                .limit(request.limit)
             ).scalars().all()
 
             if not activities:
@@ -243,4 +239,30 @@ def add_protected(app, URL, DATABASE_URL):
                 detail=f"An error occurred while retrieving activities: {str(e)}"
             )
 
+    @app.post("/grouped_activities", response_model=List[schemas.GroupedActivity])
+    def grouped_activities(
+        request: schemas.AuthRunnerRequest,
+        db: Session = Depends(get_db),
+    ):
+        try:
+            results = db.execute(
+                select(
+                    Activity.type.label("type_activity"),
+                    func.count(Activity.id).label("activities_count")
+                )
+                .join(Runner)
+                .filter(
+                    and_(
+                        Runner.username == request.username,
+                        Activity.runner_key == Runner.id,
+                    )
+                )
+                .group_by(Activity.type)
+                .order_by(func.count(Activity.id).desc())
+            ).mappings().all()
 
+            return results
+
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

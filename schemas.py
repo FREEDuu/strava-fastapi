@@ -2,6 +2,22 @@ from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from typing import List, Dict, Optional
 
+class FriendActivity(BaseModel):
+    friend_count: int
+    activity_count: int
+    
+class GroupedActivity(BaseModel):
+    type_activity: Optional[str] = None
+    activities_count: int
+    
+class AuthRunnerRequest(BaseModel):
+    username: str
+    access_token: str
+class AuthRunnerLimitRequest(BaseModel):
+    username: str
+    access_token: str
+    limit: int
+
 class YearlyCumulativeMetrics(BaseModel):
     years: Dict[str, Dict[str, Dict[str, float]]]
 
