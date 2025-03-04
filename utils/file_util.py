@@ -1,9 +1,9 @@
 import csv
 import io
-import schemas
+import schemas_old
 from typing import List
 
-def generate_csv(activities: List[schemas.Activity]):
+def generate_csv(activities: List[schemas_old.Activity]):
     """Generates CSV content from a list of Activity objects."""
     output = io.StringIO()
     writer = csv.writer(output)

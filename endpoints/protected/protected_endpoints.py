@@ -1,4 +1,4 @@
-import schemas
+import schemas_old
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, Depends, Body, status
 from strava_api import send_data_to_third_party, fetch_and_save_activities_process, fetch_and_save_activities_process_partial
@@ -15,15 +15,15 @@ from sqlalchemy import select, and_, func
 
 def add_protected(app, URL, DATABASE_URL):
     @app.post("/create_user/")
-    async def create_user(request: schemas.CreateUserRequest, db: Session = Depends(get_db)):
+    async def create_user(request: schemas_old.CreateUserRequest, db: Session = Depends(get_db)):
         print(f"Strava AUTH")
 
         try:
             strava_url = URL
-            strava_data = schemas.CreateUserRequest(code=request.code) 
+            strava_data = schemas_old.CreateUserRequest(code=request.code) 
             response = await send_data_to_third_party(strava_data, strava_url)
             print(response)
-            response_auth = schemas.StravaAuth(access_token=response['access_token'],
+            response_auth = schemas_old.StravaAuth(access_token=response['access_token'],
                                             refresh_token=response['refresh_token'],
                                             username= response['athlete']['username'],
                                             city=response['athlete']['city'],
@@ -75,8 +75,8 @@ def add_protected(app, URL, DATABASE_URL):
             print(f"An unexpected error occurred: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
-    @app.post("/auth_runner_activities", response_model=List[schemas.Activity]) 
-    def get_activities(request: schemas.AuthRunnerRequest, db: Session = Depends(get_db)):
+    @app.post("/auth_runner_activities", response_model=List[schemas_old.Activity]) 
+    def get_activities(request: schemas_old.AuthRunnerRequest, db: Session = Depends(get_db)):
         try:
             activities = db.execute(
                 select(Activity).join(Runner).filter(
@@ -95,9 +95,9 @@ def add_protected(app, URL, DATABASE_URL):
             print(f"An error occurred: {e}")  # Log the error for debugging
             raise HTTPException(status_code=500, detail="An error occurred while retrieving activities")
 
-    @app.get("/auth_runner_activities_limit", response_model=List[schemas.Activity])
+    @app.get("/auth_runner_activities_limit", response_model=List[schemas_old.Activity])
     def get_activities_limit(
-        request: schemas.AuthRunnerLimitRequest,
+        request: schemas_old.AuthRunnerLimitRequest,
         db: Session = Depends(get_db),
     ):
         try:
@@ -131,12 +131,12 @@ def add_protected(app, URL, DATABASE_URL):
                 detail="An error occurred while retrieving activities"
             )
 
-    @app.post("/auth_runner_activities_between/{runner_username}/{runner_access}", response_model=List[schemas.Activity])
+    @app.post("/auth_runner_activities_between/{runner_username}/{runner_access}", response_model=List[schemas_old.Activity])
     def get_activities_between(
         runner_username: str,
         runner_access: str,
         db: Session = Depends(get_db),
-        date_range: schemas.DateRange = Body(description="Date range for filtering activities"),
+        date_range: schemas_old.DateRange = Body(description="Date range for filtering activities"),
     ):
         try:
             query = select(Activity).join(Runner).filter(
@@ -166,9 +166,9 @@ def add_protected(app, URL, DATABASE_URL):
             print(f"An error occurred: {e}")
             raise HTTPException(status_code=500, detail="An error occurred while retrieving activities")
         
-    @app.post("/auth_runner_highlights_year", response_model=List[schemas.Activity])
+    @app.post("/auth_runner_highlights_year", response_model=List[schemas_old.Activity])
     def get_longest_activities(
-        request: schemas.AuthRunnerLimitRequest,
+        request: schemas_old.AuthRunnerLimitRequest,
         db: Session = Depends(get_db),
     ):
         try:
@@ -203,9 +203,9 @@ def add_protected(app, URL, DATABASE_URL):
             )
         
 
-    @app.post('/most_kudos', response_model=List[schemas.Activity])
+    @app.post('/most_kudos', response_model=List[schemas_old.Activity])
     def most_kudos(
-        request: schemas.AuthRunnerLimitRequest,
+        request: schemas_old.AuthRunnerLimitRequest,
         db: Session = Depends(get_db),
     ):
         try:
@@ -239,9 +239,9 @@ def add_protected(app, URL, DATABASE_URL):
                 detail=f"An error occurred while retrieving activities: {str(e)}"
             )
 
-    @app.post("/grouped_activities", response_model=List[schemas.GroupedActivity])
+    @app.post("/grouped_activities", response_model=List[schemas_old.GroupedActivity])
     def grouped_activities(
-        request: schemas.AuthRunnerRequest,
+        request: schemas_old.AuthRunnerRequest,
         db: Session = Depends(get_db),
     ):
         try:

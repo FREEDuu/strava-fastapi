@@ -1,11 +1,12 @@
 import schemas
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, Depends, Body, status
-from strava_api import send_data_to_third_party, fetch_and_save_activities_process, fetch_and_save_activities_process_partial
-from database import get_db, Runner, Activity
+from strava_api import send_data_to_third_party, fetch_and_save_activities_process
+from database import get_db
 import multiprocessing
+from models import AthleteActivity, Athlete
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from utils.data_utils import get_user_from_access_token
 from sqlalchemy import select, and_, cast, DateTime
 from typing import List
 from fastapi import HTTPException, Depends
@@ -18,14 +19,14 @@ import io
 
 def data_endpoints(app):
 
-    @app.post("/runner_activities", response_model=List[schemas.Activity]) 
-    def get_activities(request: schemas.AuthRunnerRequest, db: Session = Depends(get_db)):
+    @app.post("/runner_activities", response_model=List[schemas.AthleteActivity]) 
+    def get_activities(request: schemas.AccessTokenRequest, db: Session = Depends(get_db)):
         try:
+            athlete_id = get_user_from_access_token(request.code, db)
             activities = db.execute(
-                select(Activity).join(Runner).filter(
+                select(AthleteActivity).join(Athlete).filter(
                     and_(
-                        Runner.username == request.username,
-                        Runner.access_token == request.access_token  
+                        AthleteActivity.athlete_id == athlete_id,
                     )
                 )
             ).scalars().all()
@@ -38,22 +39,21 @@ def data_endpoints(app):
             print(f"An error occurred: {e}")  # Log the error for debugging
             raise HTTPException(status_code=500, detail="An error occurred while retrieving activities")
         
-    @app.post("/runner_highlights_year", response_model=List[schemas.Activity])
+    @app.post("/runner_highlights_year", response_model=List[schemas.AthleteActivity])
     def get_longest_activities(
-        request: schemas.AuthRunnerLimitRequest,
+        request: schemas.AccessTokenRequestLimit,
         db: Session = Depends(get_db),
     ):
         try:
+            athlete_id = get_user_from_access_token(request.code, db)
             activities = db.execute(
-                select(Activity)
-                .join(Runner)
+                select(AthleteActivity)
                 .filter(
                     and_(
-                        Runner.username == request.username,
-                        Runner.access_token == request.access_token,
+                        AthleteActivity.athlete_id == athlete_id,
                     )
                 )
-                .order_by(Activity.distance.desc())  # Order by distance descending
+                .order_by(AthleteActivity.distance.desc()) 
                 .limit(request.limit)
             ).scalars().all()
 
@@ -73,23 +73,22 @@ def data_endpoints(app):
                 status_code=500,
                 detail=f"An error occurred while retrieving activities: {str(e)}"
             )
-    @app.post('/most_kudos', response_model=List[schemas.Activity])
+    @app.post('/most_kudos', response_model=List[schemas.AthleteActivity])
 
     def most_kudos(
-        request: schemas.AuthRunnerLimitRequest,
+        request: schemas.AccessTokenRequestLimit,
         db: Session = Depends(get_db),
     ):
         try:
+            athlete_id = get_user_from_access_token(request.code, db)
             activities = db.execute(
-                select(Activity)
-                .join(Runner)
+                select(AthleteActivity)
                 .filter(
                     and_(
-                        Runner.username == request.username,
-                        Runner.access_token == request.access_token,
+                        AthleteActivity.athlete_id == athlete_id,
                     )
                 )
-                .order_by(Activity.kudos_count.desc())  # Order by kudos count descending
+                .order_by(AthleteActivity.kudos_count.desc())  # Order by kudos count descending
                 .limit(request.limit)
             ).scalars().all()
 
@@ -109,28 +108,27 @@ def data_endpoints(app):
                 status_code=500,
                 detail=f"An error occurred while retrieving activities: {str(e)}"
             )
-    @app.post("/grouped_activities", response_model=List[schemas.GroupedActivity])
+    @app.post("/grouped_activities", response_model=List[schemas.GroupedActivities])
     def grouped_activities(
-        request: schemas.AuthRunnerRequest,
+        request: schemas.AccessTokenRequest,
         db: Session = Depends(get_db),
     ):
         try:
+            athlete_id = get_user_from_access_token(request.code, db)
             results = db.execute(
                 select(
-                    Activity.type.label("type_activity"),
-                    func.count(Activity.id).label("activities_count")
+                    AthleteActivity.type.label("type_activity"),
+                    func.count(AthleteActivity.id).label("activities_count")
                 )
-                .join(Runner)
                 .filter(
                     and_(
-                        Runner.username == request.username,
-                        Activity.runner_key == Runner.id,
+                        AthleteActivity.athlete_id == athlete_id,
                     )
                 )
-                .group_by(Activity.type)
-                .order_by(func.count(Activity.id).desc())
+                .group_by(AthleteActivity.type)
+                .order_by(func.count(AthleteActivity.id).desc())
             ).mappings().all()
-
+            print(results)
             return results
 
         except Exception as e:
@@ -138,13 +136,14 @@ def data_endpoints(app):
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
         
     @app.post("/runner_activities_csv", response_class=StreamingResponse)
-    def get_activities_csv(request: schemas.AuthRunnerRequest, db: Session = Depends(get_db)):
+    def get_activities_csv(request: schemas.AccessTokenRequest, db: Session = Depends(get_db)):
         try:
+            athlete_id = get_user_from_access_token(request.code, db)
             activities = db.execute(
-                select(Activity).join(Runner).filter(
+                select(AthleteActivity).filter(
                     and_(
-                        Runner.username == request.username,
-                        Runner.access_token == request.access_token
+                       AthleteActivity.athlete_id == athlete_id,
+
                     )
                 )
             ).scalars().all()
@@ -166,24 +165,24 @@ def data_endpoints(app):
         
     @app.post("/friend_run", response_model=List[schemas.FriendActivity])
     def friend_run(
-        request: schemas.AuthRunnerRequest,
+        request: schemas.AccessTokenRequest,
         db: Session = Depends(get_db),
     ):
         try:
+            athlete_id = get_user_from_access_token(request.code, db)
             results = db.execute(
                 select(
-                    Activity.athlete_count.label("friend_count"),
-                    func.count(Activity.id).label("activity_count")
+                    AthleteActivity.athlete_count.label("friend_count"),
+                    func.count(AthleteActivity.id).label("activity_count")
                 )
-                .join(Runner)
                 .filter(
                     and_(
-                        Runner.username == request.username,
-                        Activity.runner_key == Runner.id,
+                        AthleteActivity.athlete_id == athlete_id,
+
                     )
                 )
-                .group_by(Activity.athlete_count)
-                .order_by(func.count(Activity.id).desc())
+                .group_by(AthleteActivity.athlete_count)
+                .order_by(func.count(AthleteActivity.id).desc())
             ).mappings().all()
 
             return results

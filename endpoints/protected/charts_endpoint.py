@@ -1,4 +1,4 @@
-import schemas
+import schemas_old
 from typing import List
 from database import get_db, Runner, Activity
 from fastapi import HTTPException, Depends, Body
@@ -115,12 +115,12 @@ def format_period_key(date: datetime, period: str) -> str:
         return date.strftime('%B %Y')
 
 def add_charts_endpoint(app):
-    @app.post("/gh_chart/{runner_username}/{runner_access}", response_model=schemas.ActivityGithub)
+    @app.post("/gh_chart/{runner_username}/{runner_access}", response_model=schemas_old.ActivityGithub)
     def gh_chart(
         runner_username: str,
         runner_access: str,
         db: Session = Depends(get_db),
-        date_range: schemas.DateRange = Body(description="Date range for filtering activities"),
+        date_range: schemas_old.DateRange = Body(description="Date range for filtering activities"),
     ):
         try:
             # Query to count activities per day
@@ -174,7 +174,7 @@ def add_charts_endpoint(app):
                 date_str = date_obj.strftime('%Y-%m-%d')
                 activity_data[date_str] = {"level": get_activity_level(count)}
 
-            return schemas.ActivityGithub(data=activity_data)
+            return schemas_old.ActivityGithub(data=activity_data)
 
         except HTTPException as he:
             raise he
@@ -183,7 +183,7 @@ def add_charts_endpoint(app):
             raise HTTPException(status_code=500, detail="An error occurred while retrieving activities")
     
 
-    @app.get("/main_chart/{runner_username}/{runner_access}/{limit}/{period}", response_model=schemas.GroupedMetrics)
+    @app.get("/main_chart/{runner_username}/{runner_access}/{limit}/{period}", response_model=schemas_old.GroupedMetrics)
     def main_chart(
             runner_username: str,
             runner_access: str,
@@ -264,7 +264,7 @@ def add_charts_endpoint(app):
                         "total_elevation_gain": round(metrics.total_elevation_gain, 2)
                     }
 
-            return schemas.GroupedMetrics(
+            return schemas_old.GroupedMetrics(
                 period=period,
                 metrics=grouped_metrics
             )
@@ -277,7 +277,7 @@ def add_charts_endpoint(app):
                 status_code=500, 
                 detail=f"An error occurred while retrieving activities: {str(e)}"
             )
-    @app.get("/cumulative_chart/{runner_username}/{runner_access}/{num_years}", response_model=schemas.YearlyCumulativeMetrics)
+    @app.get("/cumulative_chart/{runner_username}/{runner_access}/{num_years}", response_model=schemas_old.YearlyCumulativeMetrics)
     def cumulative_chart(
             runner_username: str,
             runner_access: str,
@@ -342,7 +342,7 @@ def add_charts_endpoint(app):
                 
                 yearly_metrics[str(year)] = daily_metrics
 
-            return schemas.YearlyCumulativeMetrics(
+            return schemas_old.YearlyCumulativeMetrics(
                 years=yearly_metrics
             )
 
