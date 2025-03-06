@@ -1,5 +1,19 @@
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
+
+class GitHubContribution(BaseModel):
+    date_activity: str
+    kudos_count: int
+
+class YearRequest(BaseModel):
+    year: int
+    code: str
+
+class ActivitySummary(BaseModel):
+    total_activities: int
+    total_elevation_gain: float
+    total_moving_time: int
+    total_distance: float
 
 class Map(BaseModel):
     id: Optional[str] = None

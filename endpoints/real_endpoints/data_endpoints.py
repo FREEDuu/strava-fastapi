@@ -16,6 +16,7 @@ from sqlalchemy import select, and_, func
 from utils.file_util import generate_csv
 from fastapi.responses import StreamingResponse
 import io
+from datetime import datetime
 
 def data_endpoints(app):
 
@@ -146,6 +147,7 @@ def data_endpoints(app):
 
                     )
                 )
+                .order_by(AthleteActivity.start_date_local)
             ).scalars().all()
 
             if not activities:
@@ -190,3 +192,89 @@ def data_endpoints(app):
         except Exception as e:
             print(f"An error occurred: {e}")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        
+    @app.post("/activity_summary", response_model=schemas.ActivitySummary)
+    def get_activity_summary(request: schemas.YearRequest,
+            db: Session = Depends(get_db)
+        ):
+        try:
+            year = request.year
+            athlete_id = get_user_from_access_token(request.code, db)
+
+            activities = db.execute(
+                select(AthleteActivity)
+                .filter(AthleteActivity.athlete_id == athlete_id)
+            ).scalars().all()
+
+            filtered_activities = []
+            for activity in activities:
+                try:
+                    date_str = activity.start_date_local.replace('Z', '+00:00')
+                    activity_datetime = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S%z")
+                    activity_year = activity_datetime.year
+                    if activity_year == year:
+                        filtered_activities.append(activity)
+                except ValueError:
+                    # Handle cases where the string is not a valid ISO format
+                    print(f"Invalid date format: {activity.start_date_local}")
+                    continue
+
+            if not filtered_activities:
+                raise HTTPException(status_code=404, detail="No activities found for the specified athlete and year.")
+
+            if not filtered_activities:
+                        raise HTTPException(status_code=404, detail="No activities found for the specified athlete and year.")
+
+            total_activities = len(filtered_activities)
+            total_elevation_gain = sum(activity.total_elevation_gain for activity in filtered_activities)
+            total_moving_time = sum(activity.moving_time for activity in filtered_activities)
+            total_distance = sum(activity.distance for activity in filtered_activities)
+
+            return schemas.ActivitySummary(
+                total_activities=total_activities,
+                total_elevation_gain=total_elevation_gain,
+                total_moving_time=total_moving_time,
+                total_distance=total_distance
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/github_contribution", response_model=List[schemas.GitHubContribution])
+    def get_github_contribution(request: schemas.YearRequest, db: Session = Depends(get_db)):
+        try:
+            athlete_id = get_user_from_access_token(request.code, db)
+            activities = db.execute(
+                select(AthleteActivity)
+                .filter(
+                    and_(
+                        AthleteActivity.athlete_id == athlete_id
+                    )
+                    )).scalars().all()
+
+            date_kudos_map = {}  # Dictionary to store date and total kudos
+
+            for activity in activities:
+                try:
+                    date_str = activity.start_date_local.replace('Z', '+00:00')
+                    activity_datetime = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S%z")
+                    date_key = activity_datetime.strftime("%Y-%m-%d")  # Extract date as string
+                    if int(date_key.split('-')[0]) == request.year:
+                        if date_key in date_kudos_map:
+                            date_kudos_map[date_key] += activity.kudos_count
+                        else:
+                            date_kudos_map[date_key] = activity.kudos_count
+
+                except ValueError:
+                    print(f"Invalid date format: {activity.start_date_local}")
+                    continue
+
+            result = [schemas.GitHubContribution(date_activity=date, kudos_count=kudos) for date, kudos in date_kudos_map.items()]
+            result.sort(key=lambda x: x.date_activity) #sort result by date
+
+            return result
+
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            db.close()
